@@ -23,6 +23,14 @@ async function connectDatabase() {
   }
 }
 
+async function safeQuery(client, sql, label) {
+  try {
+    await client.query(sql);
+  } catch (err) {
+    console.warn(`[DB] ${label} skipped: ${err.message}`);
+  }
+}
+
 async function runMigrations(client) {
   console.log("[DB] Running migrations...");
 
@@ -80,7 +88,7 @@ async function runMigrations(client) {
     CREATE TABLE IF NOT EXISTS api_keys (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      key_value VARCHAR(255) UNIQUE NOT NULL,
+      key_value VARCHAR(255) NOT NULL,
       name VARCHAR(100) NOT NULL,
       last_used TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW()
@@ -110,13 +118,54 @@ async function runMigrations(client) {
     )
   `);
 
-  await client.query("CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)");
-  await client.query("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)");
-  await client.query("CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)");
-  await client.query("CREATE INDEX IF NOT EXISTS idx_logs_project_id ON logs(project_id)");
-  await client.query("CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value)");
-  await client.query("CREATE INDEX IF NOT EXISTS idx_ai_history_user_id ON ai_history(user_id)");
-  await client.query("CREATE INDEX IF NOT EXISTS idx_verification_codes_user_id ON verification_codes(user_id)");
+  // Reconcile columns that may be missing from old table schemas
+  await safeQuery(client,
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT false",
+    "ALTER users.is_suspended");
+  await safeQuery(client,
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
+    "ALTER users.updated_at");
+  await safeQuery(client,
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS pm2_id VARCHAR(100)",
+    "ALTER projects.pm2_id");
+  await safeQuery(client,
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS entry_file VARCHAR(255)",
+    "ALTER projects.entry_file");
+  await safeQuery(client,
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER projects.description");
+  await safeQuery(client,
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
+    "ALTER projects.updated_at");
+  await safeQuery(client,
+    "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_value VARCHAR(255)",
+    "ALTER api_keys.key_value");
+  await safeQuery(client,
+    "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS last_used TIMESTAMPTZ",
+    "ALTER api_keys.last_used");
+
+  // Indexes — each wrapped so one failure does not abort startup
+  await safeQuery(client,
+    "CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)",
+    "idx_sessions_token");
+  await safeQuery(client,
+    "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
+    "idx_sessions_user_id");
+  await safeQuery(client,
+    "CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)",
+    "idx_projects_user_id");
+  await safeQuery(client,
+    "CREATE INDEX IF NOT EXISTS idx_logs_project_id ON logs(project_id)",
+    "idx_logs_project_id");
+  await safeQuery(client,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value) WHERE key_value IS NOT NULL",
+    "idx_api_keys_key_value");
+  await safeQuery(client,
+    "CREATE INDEX IF NOT EXISTS idx_ai_history_user_id ON ai_history(user_id)",
+    "idx_ai_history_user_id");
+  await safeQuery(client,
+    "CREATE INDEX IF NOT EXISTS idx_verification_codes_user_id ON verification_codes(user_id)",
+    "idx_verification_codes_user_id");
 
   console.log("[DB] Migrations complete");
 }
