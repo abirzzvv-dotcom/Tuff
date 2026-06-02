@@ -110,15 +110,13 @@ async function runMigrations(client) {
     )
   `);
 
-  await client.query(`
-    CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
-    CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-    CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
-    CREATE INDEX IF NOT EXISTS idx_logs_project_id ON logs(project_id);
-    CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value);
-    CREATE INDEX IF NOT EXISTS idx_ai_history_user_id ON ai_history(user_id);
-    CREATE INDEX IF NOT EXISTS idx_verification_codes_user_id ON verification_codes(user_id);
-  `);
+  await client.query("CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)");
+  await client.query("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)");
+  await client.query("CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)");
+  await client.query("CREATE INDEX IF NOT EXISTS idx_logs_project_id ON logs(project_id)");
+  await client.query("CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value)");
+  await client.query("CREATE INDEX IF NOT EXISTS idx_ai_history_user_id ON ai_history(user_id)");
+  await client.query("CREATE INDEX IF NOT EXISTS idx_verification_codes_user_id ON verification_codes(user_id)");
 
   console.log("[DB] Migrations complete");
 }
