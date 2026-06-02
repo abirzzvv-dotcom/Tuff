@@ -17,9 +17,17 @@ async function sleep(ms) {
 function writeConfig(token) {
   try {
     fs.mkdirSync(NGROK_CONFIG_DIR, { recursive: true });
-    // version "3" with agent.authtoken is correct for ngrok v3
-    const yaml = `version: "3"\nagent:\n  authtoken: ${token}\n`;
+    // resolver_ips bypasses the broken IPv6 DNS on Android/Termux
+    const yaml = [
+      `version: "3"`,
+      `agent:`,
+      `  authtoken: ${token}`,
+      `  resolver_ips:`,
+      `    - 8.8.8.8`,
+      `    - 1.1.1.1`,
+    ].join("\n") + "\n";
     fs.writeFileSync(NGROK_CONFIG_FILE, yaml, "utf8");
+    console.log("[Ngrok] Config written:", NGROK_CONFIG_FILE);
     return true;
   } catch (err) {
     console.error("[Ngrok] Failed to write config:", err.message);
@@ -62,8 +70,9 @@ async function startNgrok(port) {
   const domain = process.env.NGROK_DOMAIN;
   const args = [
     "http", String(port),
-    "--log=stdout",          // force logs to stdout
-    "--log-format=json",     // structured JSON — easier to parse
+    "--config", NGROK_CONFIG_FILE,  // explicitly load our config (fixes "open config file <nil>")
+    "--log=stdout",
+    "--log-format=json",
     "--log-level=info",
   ];
   if (domain) args.push(`--url=${domain}`);
