@@ -1,71 +1,105 @@
-const ngrok = require("ngrok");
+const { spawn } = require("child_process");
 
 let publicUrl = null;
 let isConnected = false;
-const MAX_RETRIES = 5;
-const RETRY_DELAY_MS = 3000;
+let ngrokProcess = null;
+
+const NGROK_API = "http://localhost:4040/api/tunnels";
+const MAX_WAIT_MS = 15000;
+const POLL_INTERVAL_MS = 500;
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function startNgrok(port, attempt = 1) {
+async function waitForUrl(timeoutMs = MAX_WAIT_MS) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(NGROK_API);
+      if (res.ok) {
+        const data = await res.json();
+        const tunnel = data.tunnels?.find((t) => t.proto === "https");
+        if (tunnel?.public_url) return tunnel.public_url;
+      }
+    } catch {}
+    await sleep(POLL_INTERVAL_MS);
+  }
+  return null;
+}
+
+async function startNgrok(port) {
   if (!process.env.NGROK_AUTH_TOKEN) {
     console.warn("[Ngrok] NGROK_AUTH_TOKEN not set — skipping tunnel");
     return null;
   }
 
-  try {
-    console.log(`[Ngrok] Starting tunnel to port ${port} (attempt ${attempt})...`);
+  // Kill any existing ngrok process
+  await stopNgrok();
 
-    await ngrok.authtoken(process.env.NGROK_AUTH_TOKEN);
+  console.log(`[Ngrok] Starting tunnel to port ${port}...`);
 
-    const url = await ngrok.connect({
-      addr: port,
-      onStatusChange: (status) => {
-        console.log(`[Ngrok] Status changed: ${status}`);
-        if (status === "closed") {
-          isConnected = false;
-          console.warn("[Ngrok] Tunnel closed — attempting reconnect...");
-          setTimeout(() => startNgrok(port), RETRY_DELAY_MS);
-        }
-      },
-      onLogEvent: (data) => {
-        if (process.env.NGROK_DEBUG === "true") {
-          console.log("[Ngrok]", data);
-        }
-      },
-    });
-
-    publicUrl = url;
-    isConnected = true;
-    console.log(`[Ngrok] Tunnel active: ${url}`);
-    return url;
-  } catch (err) {
-    console.error(`[Ngrok] Attempt ${attempt} failed:`, err.message);
-
-    if (attempt < MAX_RETRIES) {
-      console.log(`[Ngrok] Retrying in ${RETRY_DELAY_MS / 1000}s...`);
-      await sleep(RETRY_DELAY_MS);
-      return startNgrok(port, attempt + 1);
+  return new Promise((resolve) => {
+    const args = ["http", String(port), "--authtoken", process.env.NGROK_AUTH_TOKEN];
+    if (process.env.NGROK_DOMAIN) {
+      args.push("--domain", process.env.NGROK_DOMAIN);
     }
 
-    console.error("[Ngrok] All retry attempts exhausted. Backend running without tunnel.");
-    return null;
-  }
+    ngrokProcess = spawn("ngrok", args, {
+      stdio: ["ignore", "ignore", "ignore"],
+      detached: false,
+    });
+
+    ngrokProcess.on("error", async (err) => {
+      if (err.code === "ENOENT") {
+        console.error(
+          "[Ngrok] 'ngrok' binary not found.\n" +
+          "[Ngrok] Install it in Termux:\n" +
+          "[Ngrok]   pkg install wget\n" +
+          "[Ngrok]   wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz\n" +
+          "[Ngrok]   tar -xzf ngrok-v3-stable-linux-arm64.tgz\n" +
+          "[Ngrok]   mv ngrok $PREFIX/bin/\n" +
+          "[Ngrok] Then restart the backend."
+        );
+      } else {
+        console.error("[Ngrok] Process error:", err.message);
+      }
+      isConnected = false;
+      resolve(null);
+    });
+
+    ngrokProcess.on("exit", (code) => {
+      if (isConnected) {
+        console.warn(`[Ngrok] Process exited (code ${code}) — tunnel lost`);
+        isConnected = false;
+        publicUrl = null;
+      }
+    });
+
+    // Poll the ngrok local API until the tunnel URL appears
+    waitForUrl().then((url) => {
+      if (url) {
+        publicUrl = url;
+        isConnected = true;
+        console.log(`[Ngrok] Tunnel active: ${url}`);
+        resolve(url);
+      } else {
+        console.error("[Ngrok] Timed out waiting for tunnel URL. Is ngrok installed?");
+        resolve(null);
+      }
+    });
+  });
 }
 
 async function stopNgrok() {
-  if (isConnected) {
+  if (ngrokProcess) {
     try {
-      await ngrok.kill();
-      publicUrl = null;
-      isConnected = false;
-      console.log("[Ngrok] Tunnel stopped");
-    } catch (err) {
-      console.error("[Ngrok] Error stopping tunnel:", err.message);
-    }
+      ngrokProcess.kill();
+    } catch {}
+    ngrokProcess = null;
   }
+  isConnected = false;
+  publicUrl = null;
 }
 
 function getPublicUrl() {
