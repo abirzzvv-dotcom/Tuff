@@ -29,11 +29,21 @@ async function waitForUrl(timeoutMs = MAX_WAIT_MS) {
 }
 
 function configureAuthToken(token) {
+  const fs = require("fs");
+  const path = require("path");
+  const os = require("os");
+
+  // Write a clean ngrok config file, overwriting any corrupt existing one
+  const configDir = path.join(os.homedir(), ".config", "ngrok");
+  const configFile = path.join(configDir, "ngrok.yml");
+
   try {
-    execSync(`ngrok config add-authtoken ${token}`, { stdio: "pipe" });
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configFile, `version: "2"\nauthtoken: ${token}\n`, "utf8");
+    console.log("[Ngrok] Config written to", configFile);
     return true;
   } catch (err) {
-    console.error("[Ngrok] Failed to configure auth token:", err.stderr?.toString() || err.message);
+    console.error("[Ngrok] Failed to write config:", err.message);
     return false;
   }
 }
